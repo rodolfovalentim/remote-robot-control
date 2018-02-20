@@ -11,34 +11,6 @@ import json
 from cv2 import aruco
 
 
-def eulerAnglesToRotationMatrix(theta):
-    cx = math.cos(theta[0])
-    cy = math.cos(theta[1])
-    cz = math.cos(theta[2])
-
-    sx = math.sin(theta[0])
-    sy = math.sin(theta[1])
-    sz = math.sin(theta[2])
-
-    # Calculate rotation about x axis - roll
-    R_x = np.matrix([[1, 0, 0],
-                     [0, cx, -sx],
-                     [0, sx, cx]])
-
-    # Calculate rotation about y axis - pitch
-    R_y = np.matrix([[cy, 0, sy],
-                     [0, 1, 0],
-                     [-sy, 0, cy]])
-
-    # Calculate rotation about z axis - yaw
-    R_z = np.matrix([[cz, -sz, 0],
-                     [sz, cz, 0],
-                     [0, 0, 1]])
-
-    # Combined rotation matrix
-    return reduce(numpy.dot, [R_x, R_y, R_z])
-
-
 def feedback_control(robot, goal):
     pd_x, pd_y, theta_jog = robot['x'], robot['y'], robot['theta']  # unidade das coordenadas eh cm, angulo em radianos
     xb, yb = goal['x'], goal['y']  # unidade das coordenadas eh cm
@@ -76,7 +48,7 @@ def feedback_control(robot, goal):
     v_max = max(abs(y[0][0]), abs(y[1][0]))  # pega a maior velocidade
 
     # como a velocidade foi parametrizada pela maior, K eh a maior velocidade que a roda pode assumir
-    K = 90
+    K = 50
 
     if v_max == 0:
         return 0, 0, False
@@ -84,13 +56,13 @@ def feedback_control(robot, goal):
     vl = y[0][0] * (K / v_max)
     vr = y[1][0] * (K / v_max)
 
-    if distance < 0.1:
+    if distance < 0.5:
         return 0, 0, True
 
     if math.isnan(vl) or math.isnan(vr):
         return 0, 0, False
 
-    return int(vl), int(vr), False
+    return max(0, int(vl)), max(0, int(vr)), False
 
 
 UDP_IP = "192.168.1.114"
@@ -132,32 +104,29 @@ while True:
         dst_rot, dst_trans = None, None
 
         origin_coord = np.matrix([[0], [0], [0]])
+        xvector = np.matrix([[1], [0], [0]])
         ref_coord = None
         robot_coord = None
         dst_coord = None
 
         for i in range(len(ids)):
             # axis length 100 can be changed according to your requirement
-
             if ids[i] == 11:
                 ref_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], ref_rot)
                 ref_trans = tvec[i].transpose()
-                # ref_coord = ref_rot.dot(origin_coord + ref_trans)
                 imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
             elif ids[i] == 12:
                 robot_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], robot_rot)
                 robot_trans = tvec[i].transpose()
-                # robot_coord = robot_rot.dot(origin_coord + robot_trans)
                 imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
             elif ids[i] == 13:
                 dst_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], dst_rot)
                 dst_trans = tvec[i].transpose()
-                # dst_coord = dst_rot.dot(origin_coord + dst_trans)
                 imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
         if ref_rot is not None and dst_rot is not None and robot_rot is not None:
@@ -170,6 +139,10 @@ while True:
             robot_ref_refmarker = ((ref_rot.transpose()).dot(robot_ref_cam)) - ref_trans
             print("robot", 12, robot_ref_refmarker.transpose())
 
+            xvector_robot_ref_cam = robot_rot.dot(xvector + robot_trans)
+            xvector_ref_refmarker = ((ref_rot.transpose()).dot(xvector_robot_ref_cam)) - ref_trans
+            print("vetor", 12, xvector_ref_refmarker.transpose())
+
             dst_ref_cam = dst_rot.dot(origin_coord + dst_trans)
             dst_ref_refmarker = ((ref_rot.transpose()).dot(dst_ref_cam)) - ref_trans
             print("dstin", 13, dst_ref_refmarker.transpose())
@@ -177,11 +150,15 @@ while True:
             robot = dict()
             robot['x'] = robot_ref_refmarker[0]
             robot['y'] = robot_ref_refmarker[1]
-            robot['theta'] = 0
+            robot['theta'] = math.atan2(xvector_ref_refmarker.item(1,0) - robot_ref_refmarker.item(1,0),
+                                        xvector_ref_refmarker.item(0,0) - robot_ref_refmarker.item(0,0))
 
             goal = dict()
             goal['x'] = dst_ref_refmarker.item(0,0)
             goal['y'] = dst_ref_refmarker.item(1,0)
+
+            print "robot", robot
+            print "goal", goal
 
             vl, vr, ret = feedback_control(robot, goal)
 
@@ -190,7 +167,7 @@ while True:
             sock.sendto(json.dumps(MESSAGE), (UDP_IP, UDP_PORT))
 
             print MESSAGE
-            print "++++++++++++++++++++++++++++++++"
+            print "+++++++++++++++++++++++++++++++++++++++++++++++++++"
 
 
     else:
