@@ -7,6 +7,7 @@ import numpy
 import numpy as np
 import requests
 import yaml
+import json
 from cv2 import aruco
 
 
@@ -40,7 +41,7 @@ def eulerAnglesToRotationMatrix(theta):
 
 def feedback_control(robot, goal):
     pd_x, pd_y, theta_jog = robot['x'], robot['y'], robot['theta']  # unidade das coordenadas eh cm, angulo em radianos
-    xb, yb = goal[0], goal[1]  # unidade das coordenadas eh cm
+    xb, yb = goal['x'], goal['y']  # unidade das coordenadas eh cm
 
     distance = math.sqrt((xb - pd_x) ** 2 + (yb - pd_y) ** 2)
 
@@ -102,10 +103,12 @@ print("UDP target port:", UDP_PORT)
 with open('calibration.yaml') as f:
     _dict = yaml.load(f)
 
+np.set_printoptions(precision=3, suppress=True, formatter={'float': '{: 0.3f}'.format})
+
 camera_matrix = numpy.array(_dict.get('camera_matrix'))
 dist_coeffs = numpy.array(_dict.get('dist_coeff'))
 aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_1000)
-markerLength = 2.2  # Here, our measurement unit is centimetre.
+markerLength = 3.4  # Here, our measurement unit is centimetre.
 arucoParams = aruco.DetectorParameters_create()
 
 while True:
@@ -135,34 +138,60 @@ while True:
 
         for i in range(len(ids)):
             # axis length 100 can be changed according to your requirement
-            imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
-            if ids[i] == 8:
+            if ids[i] == 11:
                 ref_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], ref_rot)
                 ref_trans = tvec[i].transpose()
-                ref_coord = ref_rot.dot(origin_coord + ref_trans)
+                # ref_coord = ref_rot.dot(origin_coord + ref_trans)
+                imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
-            elif ids[i] == 13:
+            elif ids[i] == 12:
                 robot_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], robot_rot)
                 robot_trans = tvec[i].transpose()
-                robot_coord = robot_rot.dot(origin_coord + robot_trans)
+                # robot_coord = robot_rot.dot(origin_coord + robot_trans)
+                imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
-            elif ids[i] == 5:
+            elif ids[i] == 13:
                 dst_rot = numpy.zeros((3, 3))
                 cv2.Rodrigues(rvec[i], dst_rot)
                 dst_trans = tvec[i].transpose()
-                dst_coord = dst_rot.dot(origin_coord + dst_trans)
+                # dst_coord = dst_rot.dot(origin_coord + dst_trans)
+                imgWithAruco = aruco.drawAxis(imgWithAruco, camera_matrix, dist_coeffs, rvec[i], tvec[i], 1)
 
-        if ref_coord is not None:
-            print("origin", str(ref_rot.transpose().dot(origin_coord - ref_trans)))
-            # print("robot", ref_rot.dot(robot_coord + ref_trans))
-            # print("dstin", ref_rot.dot(dst_coord + ref_trans))
+        if ref_rot is not None and dst_rot is not None and robot_rot is not None:
+            # coordenada da camera em relacao ao marcador de origem
+            refmarker_ref_cam = ref_rot.dot(origin_coord + ref_trans)
+            cam_ref_refmarker = ((ref_rot.transpose()).dot(refmarker_ref_cam)) - ref_trans
+            print("  ref", 11, cam_ref_refmarker.transpose())
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # print("message:", MESSAGE)
-        sock.sendto(MESSAGE, (UDP_IP, UDP_PORT))
+            robot_ref_cam = robot_rot.dot(origin_coord + robot_trans)
+            robot_ref_refmarker = ((ref_rot.transpose()).dot(robot_ref_cam)) - ref_trans
+            print("robot", 12, robot_ref_refmarker.transpose())
+
+            dst_ref_cam = dst_rot.dot(origin_coord + dst_trans)
+            dst_ref_refmarker = ((ref_rot.transpose()).dot(dst_ref_cam)) - ref_trans
+            print("dstin", 13, dst_ref_refmarker.transpose())
+
+            robot = dict()
+            robot['x'] = robot_ref_refmarker[0]
+            robot['y'] = robot_ref_refmarker[1]
+            robot['theta'] = 0
+
+            goal = dict()
+            goal['x'] = dst_ref_refmarker.item(0,0)
+            goal['y'] = dst_ref_refmarker.item(1,0)
+
+            vl, vr, ret = feedback_control(robot, goal)
+
+            MESSAGE = {'vl': vl, 'vr': vr}
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.sendto(json.dumps(MESSAGE), (UDP_IP, UDP_PORT))
+
+            print MESSAGE
+            print "++++++++++++++++++++++++++++++++"
+
 
     else:
         # if aruco marker is NOT detectede
