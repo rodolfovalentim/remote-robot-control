@@ -80,7 +80,8 @@ np.set_printoptions(precision=3, suppress=True, formatter={'float': '{: 0.3f}'.f
 camera_matrix = numpy.array(_dict.get('camera_matrix'))
 dist_coeffs = numpy.array(_dict.get('dist_coeff'))
 aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_1000)
-markerLength = 3.4  # Here, our measurement unit is centimetre.
+# Here, our measurement unit is centimetre.
+markerLength = 3.4
 arucoParams = aruco.DetectorParameters_create()
 
 while True:
